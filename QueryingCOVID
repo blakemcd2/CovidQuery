@@ -1,0 +1,169 @@
+SELECT * 
+FROM PortfolioProj..CovidDeaths
+WHERE continent is not NULL
+ORDER BY 3, 4
+
+-- SELECT the data that we are going to be using
+SELECT location, date, total_cases, new_cases, total_deaths, population
+FROM PortfolioProj..CovidDeaths
+ORDER BY 1, 2
+
+-- Looking at the total_cases vs total_deaths
+-- Shows the likelihood of dying if you contract COVID-19 in your country
+SELECT location, date, total_cases, total_deaths, ROUND((CAST(total_deaths as float)/CAST(total_cases as float))*100, 2) AS DeathPercentage
+FROM PortfolioProj..CovidDeaths
+WHERE location LIKE '%states'
+ORDER BY 1, 2
+
+-- Looking at the total_cases vs population
+SELECT location, date, total_cases, population, (CAST(total_cases as float)/CAST(population as float))*100 AS CasePercentage
+FROM PortfolioProj..CovidDeaths
+ORDER BY 1, 2
+
+-- Countries with the highest rate of infection compared to population
+SELECT location, population, MAX(total_cases) as HighestInfectionCount, MAX((CAST(total_cases as float)/CAST(population as float))*100) AS PercentPopInfected
+FROM PortfolioProj..CovidDeaths
+GROUP BY location, population
+ORDER BY PercentPopInfected DESC
+
+-- Showing countries with the highest death_count per population
+SELECT location, population, MAX(total_deaths) as TotalDeathCount
+FROM PortfolioProj..CovidDeaths
+WHERE continent is not NULL
+GROUP BY location, population
+ORDER BY TotalDeathCount DESC
+
+-- LET'S BREAK THINGS DOWN BY CONTINENT
+
+-- Showing the continents with the highest death_counts per population
+SELECT continent, MAX(total_deaths) as TotalDeathCount
+FROM PortfolioProj..CovidDeaths
+WHERE continent is not NULL
+GROUP BY continent
+ORDER BY TotalDeathCount DESC
+
+-- GLOBAL NUMBERS
+
+--World Case numbers and deaths per day
+SELECT date, SUM(new_cases) as TotalCases, SUM(new_deaths) AS TotalDeaths, SUM(CAST(new_deaths as float))/SUM(CAST(new_cases as float)) *100 AS DeathPercentage
+FROM PortfolioProj..CovidDeaths
+WHERE continent is not NULL
+GROUP BY date
+ORDER BY 1, 2
+
+
+-- World Case Numbers and Deaths TOTAL
+SELECT SUM(new_cases) as TotalCases, SUM(new_deaths) AS TotalDeaths, SUM(CAST(new_deaths as float))/SUM(CAST(new_cases as float)) *100 AS DeathPercentage
+FROM PortfolioProj..CovidDeaths
+WHERE continent is not NULL
+ORDER BY 1, 2
+
+--Look at Total Population vs Vaccination
+--USE a CTE
+
+WITH PopVsVac (continent, location, date, population, new_vaccinations, RollingPplVaccinated)
+AS 
+(
+       SELECT d.continent, 
+       d.location, 
+       d.date,d.population, 
+       v.new_vaccinations,
+       SUM(v.new_vaccinations) OVER (PARTITION BY d.location ORDER BY d.location, d.date) AS RollingPplVaccinated
+FROM PortfolioProj..CovidDeaths AS D
+JOIN PortfolioProj..CovidVaccinations AS V
+ON d.location=v.location AND d.date=v.date
+WHERE d.continent is not NULL
+)
+SELECT location,
+       population,
+       (CAST(MAX(RollingPplVaccinated) as float)/CAST(population as float)) * 100 AS PercentageVaxxed
+FROM PopVsVac
+GROUP BY location, population
+
+--Temp Table
+
+DROP TABLE if EXISTS #PercentPopulationVaccinated
+CREATE TABLE #PercentPopulationVaccinated
+(
+       continent NVARCHAR(225),
+       location NVARCHAR(255),
+       date DATETIME,
+       population numeric,
+       new_vaccinations numeric,
+       RollingPplVaccinated numeric
+)
+INSERT INTO #PercentPopulationVaccinated
+SELECT d.continent, 
+       d.location, 
+       d.date,d.population, 
+       v.new_vaccinations,
+       SUM(v.new_vaccinations) OVER (PARTITION BY d.location ORDER BY d.location, d.date) AS RollingPplVaccinated
+FROM PortfolioProj..CovidDeaths AS D
+JOIN PortfolioProj..CovidVaccinations AS V
+ON d.location=v.location AND d.date=v.date
+
+SELECT location,
+       population,
+       (CAST(MAX(RollingPplVaccinated) as float)/CAST(population as float)) * 100 AS PercentageVaxxed
+FROM #PercentPopulationVaccinated
+GROUP BY location, population
+ORDER BY PercentageVaxxed DESC
+
+--Look at Total Population vs Vaccination
+--Creating View to store data for later visualisations
+
+CREATE VIEW PercentPopVaxxed AS
+SELECT d.continent, 
+       d.location, 
+       d.date,d.population, 
+       v.new_vaccinations,
+       SUM(v.new_vaccinations) OVER (PARTITION BY d.location ORDER BY d.location, d.date) AS RollingPplVaccinated
+FROM PortfolioProj..CovidDeaths AS D
+JOIN PortfolioProj..CovidVaccinations AS V
+ON d.location=v.location AND d.date=v.date
+WHERE d.continent IS NOT NULL
+
+SELECT location,
+       population,
+       (CAST(MAX(RollingPplVaccinated) as float)/CAST(population as float)) * 100 AS PercentageVaxxed
+FROM PercentPopVaxxed
+GROUP BY location, population
+ORDER BY PercentageVaxxed DESC
+
+
+-- Look at Case Numbers vs Deaths
+-- Create a view
+
+CREATE VIEW PercentPopDeadAndVaxx AS
+SELECT d.continent, 
+       d.location, 
+       d.date,
+       d.population,
+       d.new_cases,
+       d.total_cases,
+       d.new_deaths, 
+       v.new_vaccinations,
+       SUM(v.new_vaccinations) OVER (PARTITION BY d.location ORDER BY d.location, d.date) AS RollingPplVaccinated,
+       SUM(d.new_deaths ) OVER (PARTITION BY d.location ORDER BY d.location, d.date) AS RollingDeaths
+FROM PortfolioProj..CovidDeaths AS D
+JOIN PortfolioProj..CovidVaccinations AS V
+ON d.location=v.location AND d.date=v.date
+WHERE d.continent IS NOT NULL
+
+-- Compares the likelihood of dying when contracting covid in their country to corresponding with the percentanged vaccinated
+WITH VacVsDead AS
+(
+SELECT location,
+       (CAST(MAX(RollingPplVaccinated) as float)/CAST(population as float)) * 100 AS PercentageVaxxed,
+       (CAST(MAX(RollingDeaths) as float)/CAST(MAX(total_cases) as float)) * 100 AS PercentageDead
+FROM PercentPopDeadAndVaxx
+GROUP BY location, population
+)
+
+SELECT location,
+       (MAX(PercentageDead)/MAX(PercentageVaxxed)) *100 AS PercentDeadVsVaxxed
+FROM VacVsDead
+GROUP BY location
+ORDER BY PercentDeadVsVaxxed
+
+
